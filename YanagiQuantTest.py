@@ -1,9 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import math
+import math, sys
 
 #Run:
-#python YanagiSeqTest.py
+#python YanagiQuantTest.py sim_reads/trueTPM.tsv YanagiTPM.tsv KallistoOutput/abundance.tsv
 
 def computeMSE(trueArray, predictedArray):
 	MSE = 0.0
@@ -18,9 +18,9 @@ def computeAbsDiff(trueArray, predictedArray):
 	return absDiff
 
 if __name__ == "__main__":
-	trueTPMFilename = "Hs_sample1_TPM.txt"
-	YanagiOutputFilename = "Output_Result_FILE2"
-	KallistoOutputFilename = "Hs_1_abundance.tsv.tpm"
+	trueTPMFilename = sys.argv[1]
+	YanagiOutputFilename = sys.argv[2]
+	KallistoOutputFilename = sys.argv[3]
 
 	trueTPMFile = open(trueTPMFilename, "rU")
 	YanagiOutputFile = open(YanagiOutputFilename, "rU")
@@ -31,9 +31,9 @@ if __name__ == "__main__":
 	line = trueTPMFile.readline() #Get Header
 	line = trueTPMFile.readline()
 	while line:
-		splitLine = line.strip().split(" ")
+		splitLine = line.strip().split("\t")
 		transcriptID = splitLine[0]
-		TPM = splitLine[2]
+		TPM = splitLine[4]
 		trueTranscriptTPMsDict[transcriptID] = float(TPM)
 		line = trueTPMFile.readline()
 

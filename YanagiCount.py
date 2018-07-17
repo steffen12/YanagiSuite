@@ -201,7 +201,7 @@ def processSingleReads(readIDs, read_aligns, segs_dict, segID_counts):
             readsMapped[2] += 1
         else:   # Didn't find any segments-pair with common txs (Unmapped read)
             readsMapped[1] += 1
-    print str(float(c)/len(readIDs)) + " alignments per read"
+    #print str(float(c)/len(readIDs)) + " alignments per read"
     return readsMapped
 
 def mainSingleEnd(stdinTrue, stdinPair, pairedEndMode, kallistoMode):

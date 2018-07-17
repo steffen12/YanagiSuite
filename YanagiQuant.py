@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 #Run:
 #python YanagiQuant.py -counts Hs_Counts.tsv -readlen 101 -fraglen 100 -out Output_Result_FILE2
 #python YanagiQuant.py -counts unit_tests/Test_Input.txt -readlen 101 -out unit_tests/Test_Output.tsv
-#python YanagiQuant.py -counts YanagiCountOutput/seg_counts.tsv -readlen 101 -fraglen 101 -out tpm.tsv
+#python YanagiQuant.py -counts YanagiCountOutput/seg_counts.tsv -readlen 101 -fraglen 101 -out YanagiTPM.tsv
 
 ###############################################################################
 ###  ARGUMENT SETTINGS
@@ -159,7 +159,10 @@ def computeIsoformAbundances(countFileLines, readLength, diffMax):
     countFileLineEnd = len(countFileLines)
 
     countFileLineIndex = countFileLineIndexStart
-    countFileLine = countFileLines[countFileLineIndex].strip()
+    if len(countFileLines) != 0:
+        countFileLine = countFileLines[countFileLineIndex].strip()
+    else:
+        countFileLine = ""
 
     normSegCountsPlotList = []
     segmentLengthPlotList = []
@@ -359,9 +362,19 @@ def computeIsoformAbundances(countFileLines, readLength, diffMax):
 
                 iterCount += 1
 
-            print(likelihoodMatrix)
             logliklihood = np.sum(np.log(likelihoodMatrix+1))
+            print(logliklihood)
             ThetasLikelihoods.append([logliklihood, Thetas])
+
+            #New Thetas
+            Thetas = np.random.dirichlet(np.ones(len(geneIsoforms)), size=1)[0]
+            print(Thetas)
+            for j in range(len(geneIsoforms)):
+                Alpha[j] = Thetas[j] * isoformLengths[j]
+            sumAlpha = np.sum(Alpha)
+            for j in range(len(geneIsoforms)):
+                Alpha[j] /= sumAlpha
+            oldAlpha = np.zeros(shape=len(geneIsoforms))
 
         print(ThetasLikelihoods)
         maxLikelihoodThetas = max(ThetasLikelihoods)[1]
@@ -401,7 +414,6 @@ def arrayToString(array):
 if __name__ == "__main__":
     countFile, readLength, fragmentLength, diffMax, numProcesses, outFile = getArgs()
 
-    
     countFileHandle = open(countFile, 'rU')
     OUT = open(outFile, 'w')
     OUT.write("IsoformName\tGeneName\tTPMs\tRelativeAbundance\tSegmentLengths\n") ## Header of Results
