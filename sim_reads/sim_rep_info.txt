@@ -1,3 +1,0 @@
-rep_id	group	lib_sizes
-sample_01	1	1
-sample_02	2	1

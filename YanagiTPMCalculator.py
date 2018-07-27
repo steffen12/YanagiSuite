@@ -27,7 +27,10 @@ def calculateTPMs(readsType, readsFilename, transcriptomeFilename, readLength, o
 	for record in SeqIO.parse(transcriptomeFilename, "fasta"):
 		transcriptId = record.id
 		transcriptLength = len(record.seq)
-		transcriptEffectiveLength = transcriptLength - readLength + 1
+		if transcriptLength >= readLength:
+			transcriptEffectiveLength = transcriptLength - readLength + 1
+		else: 
+			transcriptEffectiveLength = transcriptLength
 		transcriptLengthDict[transcriptId] = (transcriptLength, transcriptEffectiveLength)
 
 	transcriptIds = sorted(transcriptLengthDict.keys())

@@ -10,7 +10,7 @@ import os
 #1) Paired end resolve multimapping
 #2) paired end frag
 #3) Decide multimapped
-#4) Valid Orientation
+#5) Check if paired end counts are valid
 #from InputLoader import *
 
 #python YanagiCount.py --single --stdin1 segments_ENSG00000100842.fa YanagiCountOutput 100
@@ -96,12 +96,13 @@ def usageExit():
 
 def read_alignment_SAM(f, read_aligns, readIDs, end_idx):  
     line = f.readline()
+    #print(line)
     if not line:
         return ("", False) #Return when file is done
     if line[0] == "@": #If header line:
         return ("@", False)
     tokens = line.split("\t")
-    readID = tokens[0][:-2]
+    readID = tokens[0]
     segID = tokens[2]
 
     flags = int(tokens[1])
@@ -167,12 +168,19 @@ def read_alignment_Kallisto(kallistoECFile, kallistoECReadsFile, read_aligns, to
                 read_aligns[readID].addAlignment(segID, -1, end_idx)
     return(False)
 
-def validLength(fl_params, length):
-    f_mean, f_sd, sd_factor = fl_params
-    return True #((length < (f_mean + sd_factor * f_sd)) and (length > (f_mean - sd_factor * f_sd)))
-
 def validOrientation(flags1, flags2):
-    return True#flags1+flags2 == 16
+    flag1Bin = bin(flags1)[2:]
+    flag2Bin = bin(flags2)[2:]
+    if(len(flag1Bin) < 5):
+        flags1Orientation = 0
+    else:
+        flags1Orientation = 16*int(flag1Bin[-5])
+    if(len(flag2Bin) < 5):
+        flags2Orientation = 0
+    else:
+        flags2Orientation = 16*int(flag2Bin[-5])
+    validOrientationTrue = ((flags1Orientation + flags2Orientation) == 16)
+    return validOrientationTrue
 
 def saveObj(obj, name):
     pickle.dump(obj, open(name+".p", "wb"))
@@ -233,14 +241,12 @@ def mainSingleEnd(stdinTrue, stdinPair, pairedEndMode, kallistoMode):
     elapsed = time.time() - start_t
     print "Elapsed Time: ", elapsed
 
-    print "Estimate Fragment Lengths..."
-    start_t = time.time()
-    fl_params = [181, 62.01, 1]
-
     print "Reading Read alignments..."
     start_t = time.time()
     read_aligns = {}
-    segID_counts = Counter()
+    segID_counts = dict()
+    for segID in segIDs:
+        segID_counts[segID] = 0
     #TODO clean up based on sorted readIDs
     readsMapped = [0,0,0]
     if stdinTrue:
@@ -263,7 +269,7 @@ def mainSingleEnd(stdinTrue, stdinPair, pairedEndMode, kallistoMode):
                 done = not readID
 
         # Process some records (if stored more than process_count reads in memory)
-        if not stdinTrue and len(readIDs[0]) > process_count:
+        if not (stdinTrue and pairedEndMode) and len(readIDs[0]) > process_count:
             process_readIDs = readIDs[0][:process_count]
             readIDs[0] = readIDs[0][process_count:]
             print i, len(read_aligns)
@@ -328,7 +334,10 @@ def processPairedReads(readIDs, kallistoMode, read_aligns, segs_dict, segPairs_c
                 if len(txs) < 1:    # alignment between segs with no tx in common
                     newSegPairs_counts[pairkey] += 1    # Counted as a novel junction
                 else:
-                    segPairs_counts[pairkey] += 1
+                    if pairkey in segPairs_counts:
+                        segPairs_counts[pairkey] += 1
+                    else:
+                        segPairs_counts[pairkey] = 1
                     mapped = True
             else:
                 if len(txs) < 1 and validOrientation(align[0][1], align[1][1]): # alignment between segs with no tx in common
@@ -336,7 +345,10 @@ def processPairedReads(readIDs, kallistoMode, read_aligns, segs_dict, segPairs_c
                 elif not validOrientation(align[0][1], align[1][1]):  # not valid alignment
                     passed_txs = True
                 else:
-                    segPairs_counts[pairkey] += 1
+                    if pairkey in segPairs_counts:
+                        segPairs_counts[pairkey] += 1
+                    else:
+                        segPairs_counts[pairkey] = 1
                     mapped = True
                     break
         if mapped:  # Correctly counted (Mapped read)
@@ -382,16 +394,16 @@ def mainPairedEnd(stdinTrue, stdinPair, kallistoMode):
     elapsed = time.time() - start_t
     print "Elapsed Time: ", elapsed
 
-    print "Estimate Fragment Lengths..."
-    start_t = time.time()
-    fl_params = [181, 62.01, 1]
-
     print "Reading Read alignments..."
     start_t = time.time()
     read_aligns = {}
-    segPairs_counts = Counter()
+    segPairs_counts = dict()
+    for segID in segIDs:
+        segPairs_counts[segID+"_"+segID] = 0
     newsegPairs_counts = Counter()
-    segPairs_txs = {}
+    segPairs_txs = dict()
+    for segID in segIDs:
+        segPairs_txs[segID+"_"+segID] = segs_dict[segID].txs
     #TODO clean up based on sorted readIDs
     readsMapped = [0,0,0]
     if stdinTrue:
@@ -441,7 +453,6 @@ def mainPairedEnd(stdinTrue, stdinPair, kallistoMode):
             if i == process_count:
                 process_readIDsSet = set(readIDs[0]) & set(readIDs[1])
                 process_readIDs = list(process_readIDsSet)
-                print(process_readIDs)
                 readIDs[0] = list(set(readIDs[0]) - process_readIDsSet)
                 readIDs[1] = list(set(readIDs[1]) - process_readIDsSet)
                 print i, len(read_aligns)
@@ -465,9 +476,11 @@ def mainPairedEnd(stdinTrue, stdinPair, kallistoMode):
     print i, len(read_aligns)
     # Process the rest of records
     if stdinTrue:
-        rMapped = processPairedReads(readIDs[1], kallistoMode, read_aligns, segs_dict, segPairs_counts, newsegPairs_counts, segPairs_txs)
+        process_readIDs = readIDs[1]
+        rMapped = processPairedReads(process_readIDs, kallistoMode, read_aligns, segs_dict, segPairs_counts, newsegPairs_counts, segPairs_txs)
     else:
-        rMapped = processPairedReads(readIDs[0], kallistoMode, read_aligns, segs_dict, segPairs_counts, newsegPairs_counts, segPairs_txs)
+        process_readIDs = readIDs[0]
+        rMapped = processPairedReads(process_readIDs, kallistoMode, read_aligns, segs_dict, segPairs_counts, newsegPairs_counts, segPairs_txs)
     readsMapped = [readsMapped[0]+rMapped[0], readsMapped[1]+rMapped[1], readsMapped[2]+rMapped[2]]
     print "Processed:", len(process_readIDs), len(read_aligns), rMapped
     print "Done!"
@@ -482,7 +495,6 @@ def mainPairedEnd(stdinTrue, stdinPair, kallistoMode):
         f.write("SEG1ID\tSEG2ID\tcount\tSEGTYPES\tGENE\tSEG1LEN\tSEG2LEN\tSEG1SLoc\tSEG2SLoc\tTXS\n")
         
         for segPair in sorted(segPairs_counts.iterkeys()):
-            print(segPair)
             count = segPairs_counts[segPair]
             segs = [segs_dict[segID] for segID in segPair.split("_")]
             types = segs[0].segtype
