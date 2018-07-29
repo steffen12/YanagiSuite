@@ -42,7 +42,7 @@ def getArgs():
     outFileExists = False
     argIndex = 1
 
-    diffMax = 0.01 #Default
+    diffMax = 0.001 #Default
     numProcesses = 1 #Default
     fragmentLength = -1 #Default
 
@@ -201,6 +201,37 @@ def calculateIsoformTPMs(segmentIDs, geneIsoforms, segmentIsoformIndicatorMatrix
 ###  START TO ANALYZE DATA FOR EACH GENE ###
 ##########################################################################################################################
 
+def computeAlphaCost(Alpha, segmentCounts, readCount, segmentIsoformIndicatorMatrix, effectiveSegmentLengths, isoformLengths):
+    cost = 0
+    for i in range(len(segmentCounts)):
+        totalSegmentAlpha = np.sum(segmentIsoformIndicatorMatrix[i, :] * Alpha)
+        for j in range(len(isoformLengths)):
+            if segmentIsoformIndicatorMatrix[i, j] == 1:
+                observedValue = segmentCounts[i] * Alpha[j] / totalSegmentAlpha
+                meanValue = readCount * Alpha[j] * effectiveSegmentLengths[i] / isoformLengths[j]
+                #print("Observed Value: ", observedValue)
+                #print("mean Value: ", meanValue)
+                diffValue = (observedValue - meanValue)
+                cost += (diffValue*diffValue)
+    print("Cost: ", cost)
+    return cost
+
+def calculateLambda(readCount, effectiveSegmentLengths, isoformLengths):
+    Lambda = np.zeros(size=(len(effectiveSegmentLengths), len(isoformLengths)))
+    for i in range(len(effectiveSegmentLengths)):
+        for j in range(len(isoformLengths)):
+            Lambda = effectiveSegmentLengths[i] / isoformLengths[j] * readCount
+
+def computeGradientAlpha(Alpha, segmentCounts, segmentIsoformIndicatorMatrix, Lambda):
+    alphaGradients = np.zeros(size=len(Alpha))
+    for i in range(len(segmentCounts)):
+        totalSegmentAlpha = np.sum(segmentIsoformIndicatorMatrix[i, :] * Alpha)
+        for j in range(len(Alpha)):
+            if segmentIsoformIndicatorMatrix[i, j] == 1:
+                alphaGradients[j] += 2*((Alpha[j] * (segmentCounts[i] / totalSegmentAlpha - Lambda[i, j])) * 
+                    (segmentCounts[i] * (totalSegmentAlpha - Alpha)/(totalSegmentAlpha*totalSegmentAlpha) - Lambda[i, j]))
+    return alphaGradients
+
 def computeIsoformAbundances(pairedEndMode, countFileLines, readLength, fragmentLength, diffMax):
     geneCount = 0
     outputDict = dict()
@@ -298,7 +329,7 @@ def computeIsoformAbundances(pairedEndMode, countFileLines, readLength, fragment
                 if(segmentIsoformIndicatorMatrix[i,j] and segmentIDs[i][0] == "E"):
                     isoformCounts[j] += segmentCounts[i]
                     isoformLengths[j] += segmentLengths[i] - readLength + 1
-            #isoformLengths[j] += (readLength - fragmentLength) #Make effective transcript length L - fragmentLength + 1
+            isoformLengths[j] += (readLength - fragmentLength) #Make effective transcript length L - fragmentLength + 1
             #isoformLengths[j] = max(isoformLengths[j], 1)
         
         ############################################################################################################################################
@@ -321,6 +352,8 @@ def computeIsoformAbundances(pairedEndMode, countFileLines, readLength, fragment
     #     #####################################################################################################
     #     ## EM algorithm
     #     #####################################################################################################
+
+        Lambda = calculateLambda(readCount, effectiveSegmentLengths, isoformLengths)
 
         Thetas = np.zeros(shape=len(geneIsoforms))
         Alpha = np.zeros(shape=len(geneIsoforms)) #This is Theta with ~ over it
@@ -359,7 +392,7 @@ def computeIsoformAbundances(pairedEndMode, countFileLines, readLength, fragment
          ## iteration begins        
                 
         if readCount != 0:
-            numInitialThetas = 5
+            numInitialThetas = 1
             ThetasLikelihoods = []
             for initialThetaIndex in range(numInitialThetas):
 
@@ -406,9 +439,7 @@ def computeIsoformAbundances(pairedEndMode, countFileLines, readLength, fragment
                     diff = diffArray.max()
 
                     sumAlpha = np.sum(Alpha)
-                    if sumAlpha == 0: 
-                        continue
-
+        
                     Alpha = np.multiply(Alpha, 1.0 / sumAlpha)
 
                     Thetas = np.zeros(shape=(len(geneIsoforms),))
@@ -421,6 +452,7 @@ def computeIsoformAbundances(pairedEndMode, countFileLines, readLength, fragment
 
                 logliklihood = np.sum(np.log(likelihoodMatrix+1))
                 ThetasLikelihoods.append([logliklihood, Thetas])
+                previousAlpha = oldAlpha
 
                 #New Thetas
                 Thetas = np.random.dirichlet(np.ones(len(geneIsoforms)), size=1)[0]
@@ -442,13 +474,18 @@ def computeIsoformAbundances(pairedEndMode, countFileLines, readLength, fragment
             maxLikelihoodThetas = max(uniqueThetasLikelihoods)[1]
             print(str(geneCount) + ": " + str(currGene)+"\t"+str(iterCount)+" iterations\tDone!")
 
+            computeAlphaCost(previousAlpha, segmentCounts, readCount, segmentIsoformIndicatorMatrix, effectiveSegmentLengths, isoformLengths)
+            print("Alpha True: ")
+            AlphaReal = [0.34727334,  0.35028438,  0.04717297,  0.0267648,  0.04750753,  0.03178321, 0.06557377,  0.08364001]
+            computeAlphaCost(AlphaReal, segmentCounts, readCount, segmentIsoformIndicatorMatrix, effectiveSegmentLengths, isoformLengths)
             isoformTPMs, isoformCounts = calculateIsoformTPMs(segmentIDs, geneIsoforms, segmentIsoformIndicatorMatrix, isoformLengths, segmentCounts, maxLikelihoodThetas)
         else:
             isoformTPMs = np.zeros(len(geneIsoforms))
             isoformCounts = np.zeros(len(geneIsoforms))
             maxLikelihoodThetas = np.full(len(geneIsoforms), fill_value=1.0/len(geneIsoforms))
 
-        print("Thetas: ", Thetas)
+        print("Isoforms ", geneIsoforms)
+        print("Alphas: ", previousAlpha)
 
         effectiveTranscriptSegmentLengths = [[] for j in range(len(geneIsoforms))]
         for j in range(len(geneIsoforms)):
@@ -458,6 +495,8 @@ def computeIsoformAbundances(pairedEndMode, countFileLines, readLength, fragment
 
         outputDict[currGene] = (geneIsoforms, isoformTPMs, isoformCounts, maxLikelihoodThetas, effectiveTranscriptSegmentLengths) 
         sumTPM += np.sum(isoformTPMs)
+        
+        #print("Output Dict: ", outputDict)
         #for j in range(len(Alpha)):
             #print(currGene+"\t"+str(geneCount)+"\t"+str(iterCount)+"\t"+isoformNames[i]+"\t"+str(isoformRelativeAbundances[i])+"\t"+str(tmpTime))
             
