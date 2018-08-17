@@ -1,11 +1,16 @@
 from collections import defaultdict
 from collections import Counter
 
+import itertools
+
 from Bio import SeqIO
 
 import subprocess
 
 import os, sys, time
+
+import psutil
+process = psutil.Process(os.getpid())
 
 class Seg:
     ID = ""
@@ -90,6 +95,8 @@ def processPairAligns(aligns1, aligns2, segsDict):
     for readID in aligns1:
         a1 = aligns1[readID]
         a2 = aligns2[readID]
+        if len(a1) == 0 or len(a2) == 0:    # only one-end mapped
+            continue
         mapped = False
         passed_txs = False
         for align in itertools.product(a1, a2):
@@ -119,7 +126,7 @@ def processPairAligns(aligns1, aligns2, segsDict):
             readsMapped[1] += 1
     print("Mapped Reads:", readsMapped[0], "Unmapped Reads:", readsMapped[1]+readsMapped[2], \
           "Unmapped Due Txs:", readsMapped[1], "Unmapped Due Direction:", readsMapped[2])
-    return(segPairs_counts, newsegPairs_counts)
+    return(segPairs_counts, newsegPairs_counts, segPairsTxs)
 
 def runAlignment(cmd):
     print("Running Alignment Command...", cmd)
@@ -152,9 +159,22 @@ outputCountsFilename = sys.argv[2]
 #cmd1, cmd2 = sys.argv[3], sys.argv[4]
 cmd1 = "./rapmap quasimap -i refs/hg37_segs_101_quasiindex/ -r simData/reads/Hs_1_1.fq -t 20"
 cmd2 = "./rapmap quasimap -i refs/hg37_segs_101_quasiindex/ -r simData/reads/Hs_1_2.fq -t 20"
+print(process.memory_info().rss)
+
+# Toy test
+aligns1 = {"r1" : [("SEG0000001", 0), ("SEG0000002", 16)],
+           "r2" : [("SEG0000003", 0)]
+           }
+
+aligns2 = {"r1" : [("SEG0000001", 16), ("SEG0000002", 0)],
+           "r2" : [("SEG0000003", 16)],
+           "r3" : [("SEG0000003", 16)]
+           }
 
 aligns1 = runAlignment(cmd1.split())
+print(process.memory_info().rss)
 aligns2 = runAlignment(cmd2.split())
+print(process.memory_info().rss)
 
 print("Loading Segments Lib...")
 start_t = time.time()
@@ -162,13 +182,15 @@ segsDict, segIDs = load_SegmentsLib(segmentReferenceFilename)
 print("Done!")
 elapsed = time.time() - start_t
 print("Elapsed Time: ", elapsed)
+print(process.memory_info().rss)
 
 print("Processing Alignments...")
 start_t = time.time()
-segPairs_counts, newsegPairs_counts = processAligns(aligns1, aligns2, segsDict)
+segPairs_counts, newsegPairs_counts, segPairs_txs = processPairAligns(aligns1, aligns2, segsDict)
 print("Done!")
 elapsed = time.time() - start_t
 print("Elapsed Time: ", elapsed)
+print(process.memory_info().rss)
 
 print("Writing Segments Counts...")
 start_t = time.time()
@@ -177,7 +199,7 @@ with open(outputCountsFilename, "w") as f:
     
     for segPair in sorted(segPairs_counts.iterkeys()):
         count = segPairs_counts[segPair]
-        segs = [segs_dict[segID] for segID in segPair.split("_")]
+        segs = [segsDict[segID] for segID in segPair.split("_")]
         types = segs[0].segtype
         types += segs[1].segtype if segs[0].ID != segs[1].ID else ""
         line = "\t".join([segs[0].ID, segs[1].ID, str(count), types,
@@ -190,7 +212,7 @@ with open(outputCountsFilename+".newJuncs", "w") as f:
     
     for segPair in sorted(newsegPairs_counts.iterkeys()):
         count = newsegPairs_counts[segPair]
-        segs = [segs_dict[segID] for segID in segPair.split("_")]
+        segs = [segsDict[segID] for segID in segPair.split("_")]
         types = segs[0].segtype
         types += segs[1].segtype if segs[0].ID != segs[1].ID else ""
         line = "\t".join([segs[0].ID, segs[1].ID, str(count), types,
