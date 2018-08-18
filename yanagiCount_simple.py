@@ -9,8 +9,20 @@ import subprocess
 
 import os, sys, time
 
-import psutil
-process = psutil.Process(os.getpid())
+import threading
+
+#import psutil
+#process = psutil.Process(os.getpid())
+
+class alignThread (threading.Thread):
+   def __init__(self, threadID, cmd):
+      threading.Thread.__init__(self)
+      self.threadID = threadID
+      self.cmd = cmd
+      self.aligns = defaultdict(list)
+   def run(self):
+      print "Starting " + self.threadID
+      self.aligns = runAlignment(self.cmd)
 
 class Seg:
     ID = ""
@@ -65,8 +77,10 @@ def readSAM(fin):
         if line.startswith('@'): #If header line:
             continue
         readID, flags, segID, pos = tokens[:4]
+        if readID[-2]=='/': # take off the suffixes /1,/2 from readID
+            readID = readID[:-2]
         #readLen = len(tokens[9])
-        readAligns[readID].append((segID, flags))
+        readAligns[readID].append((segID, int(flags)))
         #c = c+1
         #if c % 1000000 == 0:
         #    print("Seen", str(c), "alignments")
@@ -109,15 +123,15 @@ def processPairAligns(aligns1, aligns2, segsDict):
                 seg2 = segsDict[segID2]
                 txs = (seg1.txs & seg2.txs)
                 segPairsTxs[pairkey] = txs
-                validOri = validOrientation(align[0][1], align[1][1])
-                if len(txs) < 1 and validOri: # alignment between segs with no tx in common
-                    newsegPairs_counts[pairkey] += 1    # Counted as a novel junction
-                elif not validOri:  # not valid alignment
-                    passed_txs = True
-                else:
-                    segPairs_counts[pairkey] += 1
-                    mapped = True
-                    break
+            validOri = validOrientation(align[0][1], align[1][1])
+            if len(txs) < 1 and validOri: # alignment between segs with no tx in common
+              newsegPairs_counts[pairkey] += 1    # Counted as a novel junction
+            elif not validOri:  # not valid alignment
+              passed_txs = True
+            else:
+              segPairs_counts[pairkey] += 1
+              mapped = True
+              break
         if mapped:  # Correctly counted (Mapped read)
             readsMapped[0] += 1
         elif passed_txs:    # Passed the txs check, but not valid alignment (Unmapped read)
@@ -159,7 +173,7 @@ outputCountsFilename = sys.argv[2]
 #cmd1, cmd2 = sys.argv[3], sys.argv[4]
 cmd1 = "./rapmap quasimap -i refs/hg37_segs_101_quasiindex/ -r simData/reads/Hs_1_1.fq -t 20"
 cmd2 = "./rapmap quasimap -i refs/hg37_segs_101_quasiindex/ -r simData/reads/Hs_1_2.fq -t 20"
-print(process.memory_info().rss)
+##print(process.memory_info().rss)
 
 # Toy test
 aligns1 = {"r1" : [("SEG0000001", 0), ("SEG0000002", 16)],
@@ -171,10 +185,16 @@ aligns2 = {"r1" : [("SEG0000001", 16), ("SEG0000002", 0)],
            "r3" : [("SEG0000003", 16)]
            }
 
-aligns1 = runAlignment(cmd1.split())
-print(process.memory_info().rss)
-aligns2 = runAlignment(cmd2.split())
-print(process.memory_info().rss)
+##aligns1 = runAlignment(cmd1.split())
+##print(process.memory_info().rss)
+##aligns2 = runAlignment(cmd2.split())
+##print(process.memory_info().rss)
+
+# alignment threads
+thread1 = alignThread("AlignThread-1", cmd1.split())
+thread2 = alignThread("AlignThread-2", cmd2.split())
+thread1.start()
+thread2.start()
 
 print("Loading Segments Lib...")
 start_t = time.time()
@@ -182,15 +202,18 @@ segsDict, segIDs = load_SegmentsLib(segmentReferenceFilename)
 print("Done!")
 elapsed = time.time() - start_t
 print("Elapsed Time: ", elapsed)
-print(process.memory_info().rss)
+##print(process.memory_info().rss)
+
+thread1.join()
+thread2.join()
 
 print("Processing Alignments...")
 start_t = time.time()
-segPairs_counts, newsegPairs_counts, segPairs_txs = processPairAligns(aligns1, aligns2, segsDict)
+segPairs_counts, newsegPairs_counts, segPairs_txs = processPairAligns(thread1.aligns, thread2.aligns, segsDict)
 print("Done!")
 elapsed = time.time() - start_t
 print("Elapsed Time: ", elapsed)
-print(process.memory_info().rss)
+#print(process.memory_info().rss)
 
 print("Writing Segments Counts...")
 start_t = time.time()
